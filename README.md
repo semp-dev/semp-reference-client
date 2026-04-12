@@ -17,7 +17,7 @@ This walkthrough starts a local reference server and two clients (Alice and Bob)
 ```bash
 git clone https://github.com/semp-dev/semp-reference-server.git
 cd semp-reference-server
-GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-server ./cmd/semp-server
+go build -o semp-server ./cmd/semp-server
 ```
 
 ### 2. Configure and start the server
@@ -65,8 +65,8 @@ level=INFO msg="listening" addr=:8443
 ```bash
 git clone https://github.com/semp-dev/semp-reference-client.git
 cd semp-reference-client
-GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-client ./cmd/semp-client
-GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-gui ./cmd/semp-gui
+go build -o semp-client ./cmd/semp-client
+go build -o semp-gui ./cmd/semp-gui
 ```
 
 ### 4. Create client configs
