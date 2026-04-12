@@ -1,0 +1,21 @@
+# SEMP Reference Client Configuration
+#
+# Copy this file and adjust for your user:
+#   cp config.example.toml alice.toml
+
+# The user's SEMP address.
+identity = "alice@example.com"
+
+# The user's home domain.
+domain = "example.com"
+
+# WebSocket endpoint of the home server.
+server = "ws://localhost:8443/v1/ws"
+
+[database]
+# Path to the SQLite database file.
+path = "semp-client.db"
+
+[tls]
+# Allow plaintext WebSocket (ws://) connections. Set to false in production.
+insecure = true
