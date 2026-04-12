@@ -8,36 +8,76 @@ Two binaries:
 - **`semp-client`** -- command-line interface
 - **`semp-gui`** -- desktop GUI (Fyne-based)
 
-## Quick Start
+## Quick Start (Local)
 
-### Prerequisites
+This walkthrough starts a local reference server and two clients (Alice and Bob) on the same machine.
 
-- Go 1.24+ (uses `semp.dev/semp-go`)
-- A running [semp-reference-server](https://github.com/semp-dev/semp-reference-server)
-
-### Build
+### 1. Build the server
 
 ```bash
-# CLI
-GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-client ./cmd/semp-client
+git clone https://github.com/semp-dev/semp-reference-server.git
+cd semp-reference-server
+GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-server ./cmd/semp-server
+```
 
-# Desktop GUI
+### 2. Configure and start the server
+
+Create `semp.toml`:
+
+```toml
+domain = "example.com"
+listen_addr = ":8443"
+
+[database]
+path = "semp.db"
+
+[[users]]
+address = "alice@example.com"
+
+[[users]]
+address = "bob@example.com"
+
+[policy]
+session_ttl = 300
+permissions = ["send", "receive"]
+
+[logging]
+level = "info"
+```
+
+Start the server:
+
+```bash
+./semp-server -config semp.toml
+```
+
+The server generates domain keys and user keys automatically on first run and stores them in `semp.db`. You should see output like:
+
+```
+level=INFO msg="generated new domain keys" domain=example.com ...
+level=INFO msg="generated user keys" address=alice@example.com ...
+level=INFO msg="generated user keys" address=bob@example.com ...
+level=INFO msg="listening" addr=:8443
+```
+
+### 3. Build the client
+
+```bash
+git clone https://github.com/semp-dev/semp-reference-client.git
+cd semp-reference-client
+GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-client ./cmd/semp-client
 GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-gui ./cmd/semp-gui
 ```
 
-### Configure
-
-Copy the example config for each user:
+### 4. Create client configs
 
 ```bash
 cp config.example.toml alice.toml
 cp config.example.toml bob.toml
 ```
 
-Edit each file:
-
+**alice.toml:**
 ```toml
-# alice.toml
 identity = "alice@example.com"
 server = "ws://localhost:8443/v1/ws"
 domain = "example.com"
@@ -49,8 +89,8 @@ path = "alice.db"
 insecure = true
 ```
 
+**bob.toml:**
 ```toml
-# bob.toml
 identity = "bob@example.com"
 server = "ws://localhost:8443/v1/ws"
 domain = "example.com"
@@ -62,67 +102,115 @@ path = "bob.db"
 insecure = true
 ```
 
-### Generate Keys
+### 5. Generate client keys
 
 ```bash
 ./semp-client -config alice.toml init
 ./semp-client -config bob.toml init
 ```
 
-> **Note:** The reference server also generates keys for configured users on startup. Both client and server use the same keygen logic (`crypto.SuiteBaseline`), but they maintain separate key stores. For the reference demo, ensure the server's config includes your users so the server recognises them during handshake.
+> **Note:** The server and client generate keys independently using the same algorithm suite (`SuiteBaseline`). The server recognises users listed in its config and maintains its own key store. The client maintains a separate local key store for decryption.
 
-### Send a Message
+### 6. Send and receive
 
 ```bash
+# Alice sends a message to Bob
 ./semp-client -config alice.toml send \
   -to bob@example.com \
   -subject "Hello SEMP" \
   -body "This is an end-to-end encrypted message."
-```
 
-With attachments:
-
-```bash
-./semp-client -config alice.toml send \
-  -to bob@example.com \
-  -subject "See attached" \
-  -body "Report is attached." \
-  -attach report.pdf,notes.txt
-```
-
-### Fetch Messages
-
-```bash
+# Bob fetches his messages
 ./semp-client -config bob.toml fetch
-```
 
-### List and Read Messages
-
-```bash
+# Bob reads the message
 ./semp-client -config bob.toml inbox
 ./semp-client -config bob.toml read <message-id>
 ```
 
-### Request Recipient Keys
+## Connecting to a Remote Server
 
-```bash
-./semp-client -config alice.toml keys -address bob@example.com
+To use the client against a deployed reference server (e.g. `semp.example.com`), adjust the client config:
+
+```toml
+identity = "alice@example.com"
+server = "wss://semp.example.com/v1/ws"
+domain = "example.com"
+
+[database]
+path = "alice.db"
+
+[tls]
+insecure = false
 ```
 
-### Export / Import `.semp` Files
+Key differences from local setup:
+- **`server`** uses `wss://` (TLS) and points to the deployed server's hostname
+- **`tls.insecure`** is `false` (enforces TLS -- the default for production)
+- **`domain`** is the email domain (e.g. `example.com`), which may differ from the server hostname (`semp.example.com`)
 
-```bash
-./semp-client -config bob.toml export <message-id> -o message.semp
-./semp-client -config alice.toml import message.semp
+The server must have TLS configured (directly or via a reverse proxy like Caddy) and the user must be listed in the server's `[[users]]` config.
+
+## Cross-Domain Federation
+
+Two servers on different domains can exchange messages via federation. For example, Alice on `alpha.com` can send to Bob on `beta.com`.
+
+### Server setup
+
+Each server needs to know about its federation peer. Add to **Server-Alpha** (`alpha.com`):
+
+```toml
+[[federation.peers]]
+domain             = "beta.com"
+endpoint           = "wss://semp.beta.com/v1/federate"
+domain_signing_key = "<beta.com's Ed25519 signing public key, base64>"
 ```
 
-### Check Status
+And the reverse on **Server-Beta** (`beta.com`):
 
-```bash
-./semp-client -config alice.toml status
+```toml
+[[federation.peers]]
+domain             = "alpha.com"
+endpoint           = "wss://semp.alpha.com/v1/federate"
+domain_signing_key = "<alpha.com's Ed25519 signing public key, base64>"
 ```
 
-## Commands
+You can extract a server's domain signing key from its database:
+
+```bash
+sqlite3 semp.db "SELECT hex(public_key) FROM domain_keys WHERE key_type = 'signing';"
+```
+
+Or from its well-known endpoint:
+
+```bash
+curl https://semp.alpha.com/.well-known/semp/configuration
+```
+
+Alternatively, if DNS SRV/TXT records are configured per the [SEMP Discovery spec](https://github.com/semp-dev/semp-spec/blob/main/DISCOVERY.md), static peer configuration can be skipped -- the servers discover each other automatically.
+
+### Client usage
+
+From the client's perspective, cross-domain is transparent. Alice's client connects to her home server, and the server handles federation:
+
+```bash
+# Alice on alpha.com sends to Bob on beta.com
+./semp-client -config alice.toml send \
+  -to bob@beta.com \
+  -subject "Cross-domain test" \
+  -body "Federated delivery via SEMP."
+
+# Bob on beta.com fetches from his server
+./semp-client -config bob.toml fetch
+```
+
+The flow is:
+1. Alice's client connects to Server-Alpha, requests Bob's keys (routed over federation)
+2. Client encrypts and submits the envelope to Server-Alpha
+3. Server-Alpha opens a federation session to Server-Beta and forwards the envelope
+4. Bob's client connects to Server-Beta and fetches the message
+
+## CLI Commands
 
 | Command | Description |
 |---------|-------------|
@@ -136,6 +224,23 @@ With attachments:
 | `export <id> [-o file]` | Export a stored envelope as a `.semp` file |
 | `import <file>` | Import, verify, and decrypt a `.semp` file |
 | `status` | Show identity, key fingerprints, and server info |
+
+### Send with attachments
+
+```bash
+./semp-client -config alice.toml send \
+  -to bob@example.com \
+  -subject "See attached" \
+  -body "Report is attached." \
+  -attach report.pdf,notes.txt
+```
+
+### Export / Import `.semp` files
+
+```bash
+./semp-client -config bob.toml export <message-id> -o message.semp
+./semp-client -config alice.toml import message.semp
+```
 
 ## Desktop GUI
 
