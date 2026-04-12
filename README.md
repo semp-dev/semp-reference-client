@@ -1,8 +1,12 @@
 # SEMP Reference Client
 
-A command-line SEMP client that demonstrates the full protocol lifecycle: key generation, handshake, encrypted envelope composition, submission, fetching, decryption, key requests, session rekeying, and `.semp` file import/export.
+A SEMP client (CLI + desktop GUI) that demonstrates the full protocol lifecycle: key generation, handshake, encrypted envelope composition, submission, fetching, decryption, key requests, session rekeying, and `.semp` file import/export.
 
 Built on the [semp-go](https://github.com/semp-dev/semp-go) library and designed to work with the [semp-reference-server](https://github.com/semp-dev/semp-reference-server).
+
+Two binaries:
+- **`semp-client`** -- command-line interface
+- **`semp-gui`** -- desktop GUI (Fyne-based)
 
 ## Quick Start
 
@@ -14,7 +18,11 @@ Built on the [semp-go](https://github.com/semp-dev/semp-go) library and designed
 ### Build
 
 ```bash
+# CLI
 GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-client ./cmd/semp-client
+
+# Desktop GUI
+GONOSUMDB=semp.dev GOPROXY=direct go build -o semp-gui ./cmd/semp-gui
 ```
 
 ### Configure
@@ -129,10 +137,31 @@ With attachments:
 | `import <file>` | Import, verify, and decrypt a `.semp` file |
 | `status` | Show identity, key fingerprints, and server info |
 
+## Desktop GUI
+
+Launch the GUI with the same TOML config:
+
+```bash
+./semp-gui -config alice.toml
+```
+
+The GUI provides a familiar email client layout:
+- **Left sidebar** -- Inbox/Sent folder navigation + New Message button
+- **Center panel** -- Message list with sender, subject, and date
+- **Right panel** -- Full message detail with headers, body, and attachment info
+- **Status bar** -- Identity, connection state, key fingerprints
+- **Menu bar:**
+  - File: Import/Export `.semp` files
+  - Tools: Generate Keys, Lookup Keys, Connect, Fetch Messages
+  - Help: Status, About
+
+All network operations (connect, handshake, send, fetch, key lookup) run in background goroutines to keep the UI responsive. The client connects lazily on the first network operation.
+
 ## Architecture
 
 ```
 cmd/semp-client/main.go        CLI entry point and subcommand dispatch
+cmd/semp-gui/main.go           Desktop GUI entry point (Fyne)
 internal/config/config.go       TOML configuration
 internal/store/schema.go        SQLite schema
 internal/store/sqlite.go        keys.PrivateStore implementation + message storage
@@ -141,6 +170,15 @@ internal/client/client.go       Core client: connect, handshake, session
 internal/client/sender.go       Envelope composition and submission
 internal/client/receiver.go     Envelope fetch and decryption
 internal/client/rekey.go        Background session rekeying at 80% TTL
+internal/gui/app.go             GUI shared state and bindings
+internal/gui/layout.go          Window assembly and menu bar
+internal/gui/sidebar.go         Folder navigation
+internal/gui/messagelist.go     Message list (widget.List)
+internal/gui/messagedetail.go   Message detail view
+internal/gui/compose.go         Compose window
+internal/gui/statusbar.go       Status bar
+internal/gui/dialogs.go         Menu action handlers (import, export, keys, status)
+internal/gui/background.go      Goroutine helpers for network operations
 ```
 
 ### Protocol Flow
@@ -191,6 +229,7 @@ Local SQLite database (pure-Go, no CGO) with tables for:
 | `semp.dev/semp-go` | SEMP protocol library |
 | `github.com/BurntSushi/toml` | Configuration parsing |
 | `modernc.org/sqlite` | Pure-Go SQLite driver |
+| `fyne.io/fyne/v2` | Desktop GUI framework (for semp-gui) |
 
 ## License
 
