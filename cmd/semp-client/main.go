@@ -1,5 +1,5 @@
 // Command semp-client is the SEMP reference client. It demonstrates the
-// full client-side SEMP protocol: key generation, handshake, envelope
+// full client-side SEMP protocol: key registration, handshake, envelope
 // composition/encryption, submission, fetching/decryption, key requests,
 // session rekeying, and .semp file import/export.
 package main
@@ -23,7 +23,6 @@ import (
 
 	"semp.dev/semp-reference-client/internal/client"
 	"semp.dev/semp-reference-client/internal/config"
-	"semp.dev/semp-reference-client/internal/keygen"
 	"semp.dev/semp-reference-client/internal/store"
 )
 
@@ -33,17 +32,16 @@ Usage:
   semp-client [flags] <command> [command-flags]
 
 Commands:
-  init          Generate identity and encryption keys
-  import-keys   Import keys exported from the server (semp-server export-keys)
-  send          Compose, encrypt, and submit an envelope
-  fetch         Fetch and decrypt pending envelopes
-  inbox         List received messages
-  sent          List sent messages
-  read          Display a decrypted message
-  keys          Request recipient keys from the server
-  export        Export a message as a .semp file
-  import        Import and decrypt a .semp file
-  status        Show identity, keys, and server info
+  register    Generate keys and register with the home server
+  send        Compose, encrypt, and submit an envelope
+  fetch       Fetch and decrypt pending envelopes
+  inbox       List received messages
+  sent        List sent messages
+  read        Display a decrypted message
+  keys        Request recipient keys from the server
+  export      Export a message as a .semp file
+  import      Import and decrypt a .semp file
+  status      Show identity, keys, and server info
 
 Flags:
   -config string   Path to TOML config file (default "semp.toml")
@@ -52,7 +50,6 @@ Flags:
 func main() {
 	configPath := flag.String("config", "semp.toml", "path to TOML config file")
 
-	// Parse global flags before subcommand.
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 
@@ -84,10 +81,8 @@ func main() {
 	defer cancel()
 
 	switch cmd {
-	case "init":
-		runInit(cfg, s, logger)
-	case "import-keys":
-		runImportKeys(cfg, s, logger, cmdArgs)
+	case "register":
+		runRegister(ctx, cfg, s, logger, cmdArgs)
 	case "send":
 		runSend(ctx, cfg, s, logger, cmdArgs)
 	case "fetch":
@@ -117,99 +112,28 @@ func main() {
 // Subcommands
 // ---------------------------------------------------------------------------
 
-func runInit(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger) {
-	suite := crypto.SuiteBaseline
-	if err := keygen.EnsureKeys(s, suite, cfg.Identity, logger); err != nil {
-		logger.Error("init failed", "err", err)
+func runRegister(ctx context.Context, cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, args []string) {
+	fs := flag.NewFlagSet("register", flag.ExitOnError)
+	password := fs.String("password", "", "account password (required)")
+	fs.Parse(args)
+
+	if *password == "" {
+		fmt.Fprintln(os.Stderr, "error: -password is required")
+		fmt.Fprintln(os.Stderr, "usage: semp-client register -password <password>")
 		os.Exit(1)
 	}
 
-	// Print key fingerprints.
+	c := client.New(cfg, s, logger)
+	if err := c.Register(ctx, *password); err != nil {
+		logger.Error("registration failed", "err", err)
+		os.Exit(1)
+	}
+
 	_, idFP, _ := s.LoadUserPrivateKey(cfg.Identity, keys.TypeIdentity)
 	_, encFP, _ := s.LoadUserPrivateKey(cfg.Identity, keys.TypeEncryption)
-	fmt.Printf("Identity:   %s\n", cfg.Identity)
-	fmt.Printf("Domain:     %s\n", cfg.Domain)
-	fmt.Printf("Identity key fingerprint:   %s\n", idFP)
-	fmt.Printf("Encryption key fingerprint: %s\n", encFP)
-}
-
-// ExportedKeys matches the JSON format produced by semp-server export-keys.
-type ExportedKeys struct {
-	Address          string `json:"address"`
-	Domain           string `json:"domain"`
-	DomainSigningKey string `json:"domain_signing_key"`
-	IdentityPub      string `json:"identity_public_key"`
-	IdentityPriv     string `json:"identity_private_key"`
-	IdentityFP       string `json:"identity_fingerprint"`
-	EncryptionPub    string `json:"encryption_public_key"`
-	EncryptionPriv   string `json:"encryption_private_key"`
-	EncryptionFP     string `json:"encryption_fingerprint"`
-	Algorithm        string `json:"algorithm"`
-}
-
-func runImportKeys(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: semp-client import-keys <keys.json>")
-		fmt.Fprintln(os.Stderr, "\nImport keys exported from the server with: semp-server export-keys -address alice@example.com -o keys.json")
-		os.Exit(1)
-	}
-
-	data, err := os.ReadFile(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
-		os.Exit(1)
-	}
-
-	var exported ExportedKeys
-	if err := json.Unmarshal(data, &exported); err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing keys file: %v\n", err)
-		os.Exit(1)
-	}
-
-	if exported.Address != cfg.Identity {
-		fmt.Fprintf(os.Stderr, "error: key file is for %s but config identity is %s\n", exported.Address, cfg.Identity)
-		os.Exit(1)
-	}
-
-	idPub, err := base64.StdEncoding.DecodeString(exported.IdentityPub)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error decoding identity public key: %v\n", err)
-		os.Exit(1)
-	}
-	idPriv, err := base64.StdEncoding.DecodeString(exported.IdentityPriv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error decoding identity private key: %v\n", err)
-		os.Exit(1)
-	}
-	encPub, err := base64.StdEncoding.DecodeString(exported.EncryptionPub)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error decoding encryption public key: %v\n", err)
-		os.Exit(1)
-	}
-	encPriv, err := base64.StdEncoding.DecodeString(exported.EncryptionPriv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error decoding encryption private key: %v\n", err)
-		os.Exit(1)
-	}
-
-	idFP := s.PutUserKeyPair(exported.Address, keys.TypeIdentity, "ed25519", idPub, idPriv)
-	encFP := s.PutUserKeyPair(exported.Address, keys.TypeEncryption, exported.Algorithm, encPub, encPriv)
-
-	// Store the server's domain signing key so the client can verify
-	// the server's handshake signature.
-	if exported.DomainSigningKey != "" {
-		domPub, err := base64.StdEncoding.DecodeString(exported.DomainSigningKey)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not decode domain signing key: %v\n", err)
-		} else {
-			domFP := s.PutDomainKeyPair(exported.Domain, "signing", "ed25519", domPub, nil)
-			fmt.Printf("Domain signing key:         %s\n", domFP)
-		}
-	}
-
-	fmt.Printf("Imported keys for %s\n", exported.Address)
-	fmt.Printf("Identity key fingerprint:   %s\n", idFP)
-	fmt.Printf("Encryption key fingerprint: %s\n", encFP)
+	fmt.Printf("Registered: %s\n", cfg.Identity)
+	fmt.Printf("Identity key:   %s\n", idFP)
+	fmt.Printf("Encryption key: %s\n", encFP)
 }
 
 func runSend(ctx context.Context, cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, args []string) {
@@ -433,7 +357,6 @@ func runExport(s *store.SQLiteStore, args []string) {
 		os.Exit(1)
 	}
 
-	// Re-decode to get the envelope struct, then encode as file format.
 	env, err := envelope.Decode(msg.RawEnvelope)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error decoding stored envelope: %v\n", err)
@@ -477,11 +400,7 @@ func runImport(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, ar
 	fmt.Printf("Envelope ID:   %s\n", env.Postmark.ID)
 	fmt.Printf("From domain:   %s\n", env.Postmark.FromDomain)
 	fmt.Printf("To domain:     %s\n", env.Postmark.ToDomain)
-	fmt.Printf("Session ID:    %s\n", env.Postmark.SessionID)
-	fmt.Printf("Expires:       %s\n", env.Postmark.Expires.Format(time.RFC3339))
-	fmt.Printf("Algorithm:     %s\n", env.Seal.Algorithm)
 
-	// Try to verify signature if we have the domain key cached.
 	suite := crypto.SuiteBaseline
 	ctx := context.Background()
 	domRec, _ := s.LookupDomainKey(ctx, env.Postmark.FromDomain)
@@ -498,7 +417,6 @@ func runImport(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, ar
 		fmt.Printf("Signature:     not verified (domain key not cached)\n")
 	}
 
-	// Attempt decryption.
 	priv, fp, err := s.LoadUserPrivateKey(cfg.Identity, keys.TypeEncryption)
 	if err != nil || fp == "" {
 		fmt.Println("\nCannot decrypt: no encryption key available.")
@@ -529,14 +447,6 @@ func runImport(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, ar
 	fmt.Printf("Subject:    %s\n", enc.Subject)
 	fmt.Printf("\n%s\n", enc.Body.Get("text/plain"))
 
-	if len(enc.Attachments) > 0 {
-		fmt.Println("Attachments:")
-		for _, a := range enc.Attachments {
-			fmt.Printf("  - %s (%s, %d bytes)\n", a.Filename, a.MimeType, a.Size)
-		}
-	}
-
-	// Store imported message.
 	rawJSON, _ := json.Marshal(env)
 	toStrs := make([]string, len(b.To))
 	for i, a := range b.To {
@@ -551,19 +461,18 @@ func runStatus(cfg *config.Config, s *store.SQLiteStore) {
 	fmt.Printf("Domain:     %s\n", cfg.Domain)
 	fmt.Printf("Server:     %s\n", cfg.Server)
 	fmt.Printf("Database:   %s\n", cfg.Database.Path)
-	fmt.Printf("TLS:        insecure=%v\n", cfg.TLS.Insecure)
 
 	_, idFP, _ := s.LoadUserPrivateKey(cfg.Identity, keys.TypeIdentity)
 	_, encFP, _ := s.LoadUserPrivateKey(cfg.Identity, keys.TypeEncryption)
 	if idFP != "" {
 		fmt.Printf("Identity key:   %s\n", idFP)
 	} else {
-		fmt.Println("Identity key:   not generated (run 'init')")
+		fmt.Println("Identity key:   not registered (run 'register')")
 	}
 	if encFP != "" {
 		fmt.Printf("Encryption key: %s\n", encFP)
 	} else {
-		fmt.Println("Encryption key: not generated (run 'init')")
+		fmt.Println("Encryption key: not registered (run 'register')")
 	}
 
 	inbox, _ := s.ListMessages("received")
