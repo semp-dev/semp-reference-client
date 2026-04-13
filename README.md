@@ -190,7 +190,39 @@ Two servers on different domains can exchange messages via federation. From the 
 
 Federation is automatic when both servers have DNS SRV/TXT records configured. The servers discover each other, exchange domain signing keys via well-known endpoints, and establish federation sessions on demand. No manual peer configuration required.
 
-The flow:
+### Example output
+
+Real output from a federated delivery between two independent servers:
+
+**Alice on `alpha.com` sends to Bob on `beta.com`:**
+```
+$ ./semp-client -config alice.toml send -to bob@beta.com -subject "Cross-domain" -body 'First federated SEMP message!'
+level=INFO msg=connected server=wss://semp.alpha.com/v1/ws
+level=INFO msg="session established" session_id=06ERB6WQZMTY7HBDE1GYWATTS4 ttl=5m0s
+level=INFO msg="envelope sent" message_id=alice@alpha.com-1776063060023381000 to=[bob@beta.com]
+Envelope submitted: alice@alpha.com-1776063060023381000
+  bob@beta.com: delivered
+```
+
+**Bob on `beta.com` fetches:**
+```
+$ ./semp-client -config bob.toml fetch
+level=INFO msg=connected server=wss://msg.beta.com/v1/ws
+level=INFO msg="session established" session_id=06ERB71K2FSFG12EVJ2XCSXK08 ttl=5m0s
+level=INFO msg="fetched envelopes" count=1 drained=true
+
+--- Message alice@alpha.com-1776063060023381000 ---
+From:    alice@alpha.com
+To:      bob@beta.com
+Subject: Cross-domain
+Body:
+First federated SEMP message!
+
+1 message(s) fetched.
+```
+
+### How it works
+
 1. Alice's client connects to Server-Alpha, requests Bob's keys (routed over federation)
 2. Client encrypts and submits the envelope to Server-Alpha
 3. Server-Alpha discovers Server-Beta via DNS SRV, fetches its domain key, opens a federation session, and forwards the envelope
@@ -326,7 +358,7 @@ Local SQLite database (pure-Go, no CGO) with tables for:
 
 | Package | Purpose |
 |---------|---------|
-| `semp.dev/semp-go` v0.2.0 | SEMP protocol library |
+| `semp.dev/semp-go` v0.2.1 | SEMP protocol library |
 | `github.com/BurntSushi/toml` | Configuration parsing |
 | `modernc.org/sqlite` | Pure-Go SQLite driver |
 | `fyne.io/fyne/v2` | Desktop GUI framework (for semp-gui) |
