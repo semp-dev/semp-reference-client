@@ -36,7 +36,7 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 	// 1. Fetch recipient keys.
 	allAddrs := append([]string{}, opts.To...)
 	allAddrs = append(allAddrs, opts.CC...)
-	recipientKeys, domainSignFP, err := c.fetchRecipientKeys(ctx, allAddrs)
+	recipientKeys, domainEncKeys, domainSignFP, err := c.fetchRecipientKeys(ctx, allAddrs)
 	if err != nil {
 		return nil, fmt.Errorf("client: fetch recipient keys: %w", err)
 	}
@@ -84,15 +84,25 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 	}
 
 	// 4. Build recipient key lists for seal wrapping.
-	// Brief recipients: all recipient encryption keys + sender's own.
-	// Enclosure recipients: all recipient encryption keys + sender's own.
+	// Brief recipients: domain encryption keys (so servers can route)
+	//                    + all recipient device/user encryption keys
+	//                    + sender's own encryption key.
+	// Enclosure recipients: only user/device encryption keys + sender's own.
+	//                       Servers MUST NOT be able to read the enclosure.
 	senderPub, senderFP, err := c.senderEncryptionPubKey()
 	if err != nil {
 		return nil, err
 	}
-	briefRecipients := []seal.RecipientKey{
-		{Fingerprint: senderFP, PublicKey: senderPub},
+
+	// Start brief recipients with domain encryption keys (sender's + recipient's servers).
+	briefRecipients := make([]seal.RecipientKey, 0, len(domainEncKeys)+len(recipientKeys)+1)
+	for _, dk := range domainEncKeys {
+		briefRecipients = append(briefRecipients, dk)
 	}
+	briefRecipients = append(briefRecipients, seal.RecipientKey{
+		Fingerprint: senderFP, PublicKey: senderPub,
+	})
+
 	enclosureRecipients := []seal.RecipientKey{
 		{Fingerprint: senderFP, PublicKey: senderPub},
 	}
@@ -159,18 +169,20 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 // fetchRecipientKeys requests encryption keys for all addresses via the
 // in-session SEMP_KEYS protocol and returns seal.RecipientKey entries plus
 // the sender domain's signing key fingerprint.
-func (c *Client) fetchRecipientKeys(ctx context.Context, addresses []string) ([]seal.RecipientKey, keys.Fingerprint, error) {
+func (c *Client) fetchRecipientKeys(ctx context.Context, addresses []string) ([]seal.RecipientKey, []seal.RecipientKey, keys.Fingerprint, error) {
 	fetcher := keys.NewFetcher(c.conn)
 	reqID := fmt.Sprintf("kr-%d", time.Now().UnixNano())
 	req := keys.NewRequest(reqID, addresses)
 
 	resp, err := fetcher.FetchKeys(ctx, req)
 	if err != nil {
-		return nil, "", fmt.Errorf("fetch keys: %w", err)
+		return nil, nil, "", fmt.Errorf("fetch keys: %w", err)
 	}
 
 	var recipients []seal.RecipientKey
 	var domainSignFP keys.Fingerprint
+	seenDomains := make(map[string]bool)
+	var domainEncKeys []seal.RecipientKey
 
 	for _, r := range resp.Results {
 		if r.Status != keys.StatusFound {
@@ -181,6 +193,18 @@ func (c *Client) fetchRecipientKeys(ctx context.Context, addresses []string) ([]
 		// Capture domain signing key fingerprint (for seal.key_id).
 		if r.DomainKey != nil && domainSignFP == "" {
 			domainSignFP = r.DomainKey.KeyID
+		}
+
+		// Capture domain encryption key (one per domain, for brief wrapping).
+		if r.DomainEncKey != nil && !seenDomains[r.Domain] {
+			seenDomains[r.Domain] = true
+			pub, err := decodePubKey(r.DomainEncKey)
+			if err == nil {
+				domainEncKeys = append(domainEncKeys, seal.RecipientKey{
+					Fingerprint: r.DomainEncKey.KeyID,
+					PublicKey:   pub,
+				})
+			}
 		}
 
 		// Find encryption key among user keys.
@@ -202,7 +226,7 @@ func (c *Client) fetchRecipientKeys(ctx context.Context, addresses []string) ([]
 		}
 	}
 
-	return recipients, domainSignFP, nil
+	return recipients, domainEncKeys, domainSignFP, nil
 }
 
 // detectMIME returns a MIME type for the given filename, defaulting to
