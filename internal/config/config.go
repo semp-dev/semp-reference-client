@@ -20,6 +20,10 @@ type Config struct {
 	// Server is the WebSocket endpoint of the home server.
 	Server string `toml:"server"`
 
+	// Suite is the cryptographic algorithm suite identifier.
+	// Default: "pq-kyber768-x25519" (post-quantum hybrid).
+	Suite string `toml:"suite"`
+
 	Database DatabaseConfig `toml:"database"`
 	TLS      TLSConfig      `toml:"tls"`
 }
@@ -47,6 +51,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Apply defaults.
+	if cfg.Suite == "" {
+		cfg.Suite = "pq-kyber768-x25519"
+	}
 	if cfg.Database.Path == "" {
 		cfg.Database.Path = "semp-client.db"
 	}

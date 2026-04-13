@@ -42,8 +42,8 @@ func BuildMenu(g *GUIApp) *fyne.MainMenu {
 	fileMenu := fyne.NewMenu("File", importItem, exportItem, fyne.NewMenuItemSeparator(), quitItem)
 
 	// Tools menu.
-	initItem := fyne.NewMenuItem("Generate Keys", func() {
-		ShowInitDialog(g)
+	initItem := fyne.NewMenuItem("Register", func() {
+		ShowRegisterDialog(g)
 	})
 	keysItem := fyne.NewMenuItem("Lookup Keys...", func() {
 		ShowKeyLookupDialog(g)

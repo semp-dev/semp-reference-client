@@ -12,6 +12,11 @@ domain = "example.com"
 # WebSocket endpoint of the home server.
 server = "ws://localhost:8443/v1/ws"
 
+# Cryptographic algorithm suite.
+# "pq-kyber768-x25519" (post-quantum hybrid, default)
+# "x25519-chacha20-poly1305" (baseline)
+suite = "pq-kyber768-x25519"
+
 [database]
 # Path to the SQLite database file.
 path = "semp-client.db"

@@ -166,5 +166,9 @@ func (g *GUIApp) loadKeyFingerprints() {
 
 // Suite returns the crypto suite used by this client.
 func (g *GUIApp) Suite() crypto.Suite {
-	return crypto.SuiteBaseline
+	suite := crypto.LookupSuite(crypto.SuiteID(g.Cfg.Suite))
+	if suite == nil {
+		return crypto.SuitePQ
+	}
+	return suite
 }

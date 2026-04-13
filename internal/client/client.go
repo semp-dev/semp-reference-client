@@ -41,10 +41,14 @@ type Client struct {
 // New creates a client. Call Connect and then Handshake (or
 // ConnectAndHandshake) before using Send/Fetch/etc.
 func New(cfg *config.Config, s *store.SQLiteStore, log *slog.Logger) *Client {
+	suite := crypto.LookupSuite(crypto.SuiteID(cfg.Suite))
+	if suite == nil {
+		suite = crypto.SuitePQ // default to post-quantum
+	}
 	return &Client{
 		Cfg:   cfg,
 		Store: s,
-		Suite: crypto.SuiteBaseline,
+		Suite: suite,
 		Log:   log,
 	}
 }
@@ -62,11 +66,14 @@ func (c *Client) Register(ctx context.Context, password string) error {
 		}
 		c.Store.PutUserKeyPair(c.Cfg.Identity, keys.TypeIdentity, "ed25519", idPub, idPriv)
 
-		encPub, encPriv, err := c.Suite.KEM().GenerateKeyPair()
+		// Encryption keys are always X25519 because the seal layer uses
+		// X25519 for per-recipient key wrapping regardless of session suite.
+		baselineKEM := crypto.SuiteBaseline.KEM()
+		encPub, encPriv, err := baselineKEM.GenerateKeyPair()
 		if err != nil {
 			return fmt.Errorf("client: generate encryption key: %w", err)
 		}
-		c.Store.PutUserKeyPair(c.Cfg.Identity, keys.TypeEncryption, string(c.Suite.ID()), encPub, encPriv)
+		c.Store.PutUserKeyPair(c.Cfg.Identity, keys.TypeEncryption, "x25519-chacha20-poly1305", encPub, encPriv)
 		c.Log.Info("generated keys locally")
 	}
 
@@ -99,7 +106,7 @@ func (c *Client) Register(ctx context.Context, password string) error {
 			PublicKey: base64.StdEncoding.EncodeToString(idPub),
 		},
 		EncryptionKey: registerKey{
-			Algorithm: string(c.Suite.ID()),
+			Algorithm: "x25519-chacha20-poly1305",
 			PublicKey: base64.StdEncoding.EncodeToString(encPub),
 		},
 	}

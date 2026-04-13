@@ -18,28 +18,37 @@ import (
 	"semp.dev/semp-go/envelope"
 	"semp.dev/semp-go/keys"
 
-	"semp.dev/semp-reference-client/internal/keygen"
+	"semp.dev/semp-reference-client/internal/client"
 )
 
-// ShowInitDialog generates keys after confirmation.
-func ShowInitDialog(g *GUIApp) {
-	dialog.ShowConfirm("Generate Keys",
-		fmt.Sprintf("Generate identity and encryption keys for %s?", g.Cfg.Identity),
+// ShowRegisterDialog prompts for a password and registers the user with the server.
+func ShowRegisterDialog(g *GUIApp) {
+	pwEntry := widget.NewPasswordEntry()
+	pwEntry.SetPlaceHolder("Account password")
+
+	items := []*widget.FormItem{
+		widget.NewFormItem("Password", pwEntry),
+	}
+
+	dialog.ShowForm("Register", "Register", "Cancel", items,
 		func(ok bool) {
 			if !ok {
 				return
 			}
-			go func() {
-				suite := crypto.SuiteBaseline
-				if err := keygen.EnsureKeys(g.Store, suite, g.Cfg.Identity, g.Logger); err != nil {
-					dialog.ShowError(fmt.Errorf("key generation: %w", err), g.Window)
-					return
-				}
+			password := pwEntry.Text
+			if password == "" {
+				dialog.ShowError(fmt.Errorf("password is required"), g.Window)
+				return
+			}
+			RunInBackground(g, "Registering", func(ctx context.Context) error {
+				c := client.New(g.Cfg, g.Store, g.Logger)
+				return c.Register(ctx, password)
+			}, func() {
 				g.loadKeyFingerprints()
-				dialog.ShowInformation("Keys Generated",
-					fmt.Sprintf("Keys generated for %s", g.Cfg.Identity),
+				dialog.ShowInformation("Registered",
+					fmt.Sprintf("Registered %s with server", g.Cfg.Identity),
 					g.Window)
-			}()
+			})
 		}, g.Window)
 }
 
@@ -154,7 +163,7 @@ func ShowImportDialog(g *GUIApp) {
 			return
 		}
 
-		suite := crypto.SuiteBaseline
+		suite := g.Suite()
 		candidates, err := buildCandidates(g)
 		if err != nil {
 			dialog.ShowError(err, g.Window)
