@@ -135,15 +135,16 @@ func runInit(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger) {
 
 // ExportedKeys matches the JSON format produced by semp-server export-keys.
 type ExportedKeys struct {
-	Address        string `json:"address"`
-	Domain         string `json:"domain"`
-	IdentityPub    string `json:"identity_public_key"`
-	IdentityPriv   string `json:"identity_private_key"`
-	IdentityFP     string `json:"identity_fingerprint"`
-	EncryptionPub  string `json:"encryption_public_key"`
-	EncryptionPriv string `json:"encryption_private_key"`
-	EncryptionFP   string `json:"encryption_fingerprint"`
-	Algorithm      string `json:"algorithm"`
+	Address          string `json:"address"`
+	Domain           string `json:"domain"`
+	DomainSigningKey string `json:"domain_signing_key"`
+	IdentityPub      string `json:"identity_public_key"`
+	IdentityPriv     string `json:"identity_private_key"`
+	IdentityFP       string `json:"identity_fingerprint"`
+	EncryptionPub    string `json:"encryption_public_key"`
+	EncryptionPriv   string `json:"encryption_private_key"`
+	EncryptionFP     string `json:"encryption_fingerprint"`
+	Algorithm        string `json:"algorithm"`
 }
 
 func runImportKeys(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, args []string) {
@@ -193,6 +194,18 @@ func runImportKeys(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger
 
 	idFP := s.PutUserKeyPair(exported.Address, keys.TypeIdentity, "ed25519", idPub, idPriv)
 	encFP := s.PutUserKeyPair(exported.Address, keys.TypeEncryption, exported.Algorithm, encPub, encPriv)
+
+	// Store the server's domain signing key so the client can verify
+	// the server's handshake signature.
+	if exported.DomainSigningKey != "" {
+		domPub, err := base64.StdEncoding.DecodeString(exported.DomainSigningKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not decode domain signing key: %v\n", err)
+		} else {
+			domFP := s.PutDomainKeyPair(exported.Domain, "signing", "ed25519", domPub, nil)
+			fmt.Printf("Domain signing key:         %s\n", domFP)
+		}
+	}
 
 	fmt.Printf("Imported keys for %s\n", exported.Address)
 	fmt.Printf("Identity key fingerprint:   %s\n", idFP)
