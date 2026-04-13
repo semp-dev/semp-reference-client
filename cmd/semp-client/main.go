@@ -33,16 +33,17 @@ Usage:
   semp-client [flags] <command> [command-flags]
 
 Commands:
-  init       Generate identity and encryption keys
-  send       Compose, encrypt, and submit an envelope
-  fetch      Fetch and decrypt pending envelopes
-  inbox      List received messages
-  sent       List sent messages
-  read       Display a decrypted message
-  keys       Request recipient keys from the server
-  export     Export a message as a .semp file
-  import     Import and decrypt a .semp file
-  status     Show identity, keys, and server info
+  init          Generate identity and encryption keys
+  import-keys   Import keys exported from the server (semp-server export-keys)
+  send          Compose, encrypt, and submit an envelope
+  fetch         Fetch and decrypt pending envelopes
+  inbox         List received messages
+  sent          List sent messages
+  read          Display a decrypted message
+  keys          Request recipient keys from the server
+  export        Export a message as a .semp file
+  import        Import and decrypt a .semp file
+  status        Show identity, keys, and server info
 
 Flags:
   -config string   Path to TOML config file (default "semp.toml")
@@ -85,6 +86,8 @@ func main() {
 	switch cmd {
 	case "init":
 		runInit(cfg, s, logger)
+	case "import-keys":
+		runImportKeys(cfg, s, logger, cmdArgs)
 	case "send":
 		runSend(ctx, cfg, s, logger, cmdArgs)
 	case "fetch":
@@ -126,6 +129,72 @@ func runInit(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger) {
 	_, encFP, _ := s.LoadUserPrivateKey(cfg.Identity, keys.TypeEncryption)
 	fmt.Printf("Identity:   %s\n", cfg.Identity)
 	fmt.Printf("Domain:     %s\n", cfg.Domain)
+	fmt.Printf("Identity key fingerprint:   %s\n", idFP)
+	fmt.Printf("Encryption key fingerprint: %s\n", encFP)
+}
+
+// ExportedKeys matches the JSON format produced by semp-server export-keys.
+type ExportedKeys struct {
+	Address        string `json:"address"`
+	Domain         string `json:"domain"`
+	IdentityPub    string `json:"identity_public_key"`
+	IdentityPriv   string `json:"identity_private_key"`
+	IdentityFP     string `json:"identity_fingerprint"`
+	EncryptionPub  string `json:"encryption_public_key"`
+	EncryptionPriv string `json:"encryption_private_key"`
+	EncryptionFP   string `json:"encryption_fingerprint"`
+	Algorithm      string `json:"algorithm"`
+}
+
+func runImportKeys(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: semp-client import-keys <keys.json>")
+		fmt.Fprintln(os.Stderr, "\nImport keys exported from the server with: semp-server export-keys -address alice@example.com -o keys.json")
+		os.Exit(1)
+	}
+
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading %s: %v\n", args[0], err)
+		os.Exit(1)
+	}
+
+	var exported ExportedKeys
+	if err := json.Unmarshal(data, &exported); err != nil {
+		fmt.Fprintf(os.Stderr, "error parsing keys file: %v\n", err)
+		os.Exit(1)
+	}
+
+	if exported.Address != cfg.Identity {
+		fmt.Fprintf(os.Stderr, "error: key file is for %s but config identity is %s\n", exported.Address, cfg.Identity)
+		os.Exit(1)
+	}
+
+	idPub, err := base64.StdEncoding.DecodeString(exported.IdentityPub)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding identity public key: %v\n", err)
+		os.Exit(1)
+	}
+	idPriv, err := base64.StdEncoding.DecodeString(exported.IdentityPriv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding identity private key: %v\n", err)
+		os.Exit(1)
+	}
+	encPub, err := base64.StdEncoding.DecodeString(exported.EncryptionPub)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding encryption public key: %v\n", err)
+		os.Exit(1)
+	}
+	encPriv, err := base64.StdEncoding.DecodeString(exported.EncryptionPriv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding encryption private key: %v\n", err)
+		os.Exit(1)
+	}
+
+	idFP := s.PutUserKeyPair(exported.Address, keys.TypeIdentity, "ed25519", idPub, idPriv)
+	encFP := s.PutUserKeyPair(exported.Address, keys.TypeEncryption, exported.Algorithm, encPub, encPriv)
+
+	fmt.Printf("Imported keys for %s\n", exported.Address)
 	fmt.Printf("Identity key fingerprint:   %s\n", idFP)
 	fmt.Printf("Encryption key fingerprint: %s\n", encFP)
 }
