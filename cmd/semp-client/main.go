@@ -5,12 +5,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -39,6 +41,9 @@ Commands:
   sent        List sent messages
   read        Display a decrypted message
   keys        Request recipient keys from the server
+  block       Add a block list entry on the server
+  unblock     Remove a block list entry from the server
+  blocklist   List block entries for your address
   export      Export a message as a .semp file
   import      Import and decrypt a .semp file
   status      Show identity, keys, and server info
@@ -99,6 +104,12 @@ func main() {
 		runExport(s, cmdArgs)
 	case "import":
 		runImport(cfg, s, logger, cmdArgs)
+	case "block":
+		runBlock(cfg, cmdArgs)
+	case "unblock":
+		runUnblock(cfg, cmdArgs)
+	case "blocklist":
+		runBlockList(cfg, cmdArgs)
 	case "status":
 		runStatus(cfg, s)
 	default:
@@ -479,6 +490,107 @@ func runStatus(cfg *config.Config, s *store.SQLiteStore) {
 	sent, _ := s.ListMessages("sent")
 	fmt.Printf("Inbox:      %d message(s)\n", len(inbox))
 	fmt.Printf("Sent:       %d message(s)\n", len(sent))
+}
+
+func runBlock(cfg *config.Config, args []string) {
+	fs := flag.NewFlagSet("block", flag.ExitOnError)
+	entityType := fs.String("type", "user", "entity type: user, domain, or server")
+	entity := fs.String("entity", "", "address, domain, or hostname to block (required)")
+	reason := fs.String("reason", "", "reason for blocking")
+	scope := fs.String("scope", "all", "scope: all, direct, or group")
+	fs.Parse(args)
+
+	if *entity == "" {
+		fmt.Fprintln(os.Stderr, "error: -entity is required")
+		os.Exit(1)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"user_id":        cfg.Identity,
+		"entity_type":    *entityType,
+		"entity_value":   *entity,
+		"acknowledgment": "rejected",
+		"reason":         *reason,
+		"scope":          *scope,
+	})
+
+	url := serverHTTPBase(cfg) + "/v1/blocklist"
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	var result map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	fmt.Printf("Blocked %s %s (id: %s)\n", *entityType, *entity, result["id"])
+}
+
+func runUnblock(cfg *config.Config, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: semp-client unblock <entry-id>")
+		os.Exit(1)
+	}
+	url := serverHTTPBase(cfg) + "/v1/blocklist/" + args[0]
+	req, _ := http.NewRequest(http.MethodDelete, url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	fmt.Printf("Unblocked entry %s\n", args[0])
+}
+
+func runBlockList(cfg *config.Config, args []string) {
+	url := serverHTTPBase(cfg) + "/v1/blocklist?address=" + cfg.Identity
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	var entries []json.RawMessage
+	_ = json.NewDecoder(resp.Body).Decode(&entries)
+	if len(entries) == 0 {
+		fmt.Println("No block list entries.")
+		return
+	}
+	for _, e := range entries {
+		var entry struct {
+			ID     string `json:"id"`
+			Entity struct {
+				Type    string `json:"type"`
+				Address string `json:"address"`
+				Domain  string `json:"domain"`
+				Hostname string `json:"hostname"`
+			} `json:"entity"`
+			Acknowledgment string `json:"acknowledgment"`
+			Scope          string `json:"scope"`
+		}
+		_ = json.Unmarshal(e, &entry)
+		value := entry.Entity.Address
+		if value == "" {
+			value = entry.Entity.Domain
+		}
+		if value == "" {
+			value = entry.Entity.Hostname
+		}
+		fmt.Printf("  %s  %s %s  (scope: %s, ack: %s)\n",
+			entry.ID, entry.Entity.Type, value, entry.Scope, entry.Acknowledgment)
+	}
+	fmt.Printf("\n%d entry(s)\n", len(entries))
+}
+
+// serverHTTPBase returns the HTTPS/HTTP base URL derived from the WebSocket server URL.
+func serverHTTPBase(cfg *config.Config) string {
+	url := cfg.Server
+	url = strings.Replace(url, "wss://", "https://", 1)
+	url = strings.Replace(url, "ws://", "http://", 1)
+	if idx := strings.Index(url, "/v1/"); idx > 0 {
+		url = url[:idx]
+	}
+	return url
 }
 
 // ---------------------------------------------------------------------------

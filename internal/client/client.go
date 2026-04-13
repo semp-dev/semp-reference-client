@@ -17,6 +17,7 @@ import (
 	"semp.dev/semp-go/keys"
 	"semp.dev/semp-go/session"
 	"semp.dev/semp-go/transport"
+	"semp.dev/semp-go/transport/h2"
 	"semp.dev/semp-go/transport/ws"
 
 	"semp.dev/semp-reference-client/internal/config"
@@ -191,13 +192,23 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.encryptionFP = encFP
 
-	// Dial WebSocket.
-	t := ws.NewWithConfig(ws.Config{
-		AllowInsecure: c.Cfg.TLS.Insecure,
-	})
-	conn, err := t.Dial(ctx, c.Cfg.Server)
-	if err != nil {
-		return fmt.Errorf("client: dial %s: %w", c.Cfg.Server, err)
+	// Dial using the appropriate transport based on URL scheme.
+	var conn transport.Conn
+	var dialErr error
+	server := c.Cfg.Server
+	if strings.HasPrefix(server, "wss://") || strings.HasPrefix(server, "ws://") {
+		t := ws.NewWithConfig(ws.Config{AllowInsecure: c.Cfg.TLS.Insecure})
+		conn, dialErr = t.Dial(ctx, server)
+	} else if strings.HasPrefix(server, "https://") || strings.HasPrefix(server, "http://") {
+		t := h2.NewWithConfig(h2.PersistentConfig{
+			Config: h2.Config{AllowInsecure: c.Cfg.TLS.Insecure},
+		})
+		conn, dialErr = t.Dial(ctx, server)
+	} else {
+		return fmt.Errorf("client: unsupported server URL scheme: %s", server)
+	}
+	if dialErr != nil {
+		return fmt.Errorf("client: dial %s: %w", server, dialErr)
 	}
 	c.conn = conn
 	c.Log.Info("connected", "server", c.Cfg.Server)
