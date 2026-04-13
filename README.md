@@ -102,14 +102,21 @@ path = "bob.db"
 insecure = true
 ```
 
-### 5. Generate client keys
+### 5. Provision client keys
+
+The reference server generates user keys on first boot. Export them and import into the client:
 
 ```bash
-./semp-client -config alice.toml init
-./semp-client -config bob.toml init
+# From the server directory
+./semp-server export-keys -address alice@example.com -o alice-keys.json
+./semp-server export-keys -address bob@example.com -o bob-keys.json
+
+# From the client directory
+./semp-client -config alice.toml import-keys alice-keys.json
+./semp-client -config bob.toml import-keys bob-keys.json
 ```
 
-> **Note:** The server and client generate keys independently using the same algorithm suite (`SuiteBaseline`). The server recognises users listed in its config and maintains its own key store. The client maintains a separate local key store for decryption.
+> **Important: this key provisioning model is for demonstration only.** In a production SEMP deployment, user private keys are generated on the client device and never leave it. Only the public key is registered with the server via a registration API. The server never sees or stores user private keys. This reference implementation uses server-side key generation and `export-keys` / `import-keys` purely for convenience. See [KEY.md section 9](https://github.com/semp-dev/semp-spec/blob/master/KEY.md) for the specification.
 
 ### 6. Send and receive
 
@@ -149,7 +156,13 @@ Key differences from local setup:
 - **`tls.insecure`** is `false` (enforces TLS -- the default for production)
 - **`domain`** is the email domain (e.g. `example.com`), which may differ from the server hostname (`semp.example.com`)
 
-The server must have TLS configured (directly or via a reverse proxy like Caddy) and the user must be listed in the server's `[[users]]` config.
+The server must have TLS configured (directly or via a reverse proxy like Caddy/Traefik/Cloudflare) and the user must be listed in the server's `[[users]]` config.
+
+Before connecting, import the keys exported from the server:
+
+```bash
+./semp-client -config alice.toml import-keys alice-keys.json
+```
 
 ## Cross-Domain Federation
 
@@ -215,6 +228,7 @@ The flow is:
 | Command | Description |
 |---------|-------------|
 | `init` | Generate identity (Ed25519) and encryption (X25519) key pairs |
+| `import-keys <file>` | Import keys exported from the server (`semp-server export-keys`) |
 | `send` | Compose, encrypt, and submit an envelope |
 | `fetch` | Fetch and decrypt all pending envelopes from the home server |
 | `inbox` | List received messages |
