@@ -167,6 +167,25 @@ Key differences from local setup:
 - **`tls.insecure`** is `false` (enforces TLS)
 - The email domain (e.g. `example.com`) may differ from the server hostname (`semp.example.com`)
 
+### Transport selection
+
+The client auto-detects the transport from the server URL scheme:
+
+| URL scheme | Transport |
+|---|---|
+| `wss://` or `ws://` | WebSocket |
+| `https://` or `http://` | HTTP/2 |
+
+HTTP/2 is the mandatory baseline transport per the SEMP specification. WebSocket is recommended as an additional transport. Examples:
+
+```toml
+# WebSocket (default, recommended)
+server = "wss://semp.example.com/v1/ws"
+
+# HTTP/2 (mandatory baseline)
+server = "https://semp.example.com/v1/h2"
+```
+
 Register before first use:
 
 ```bash
@@ -239,6 +258,9 @@ First federated SEMP message!
 | `sent` | List sent messages |
 | `read <id>` | Display a decrypted message |
 | `keys -address <addr>` | Request recipient keys via the in-session SEMP_KEYS protocol |
+| `block` | Add a block list entry on the server |
+| `unblock <id>` | Remove a block list entry |
+| `blocklist` | List block entries for your address |
 | `export <id> [-o file]` | Export a stored envelope as a `.semp` file |
 | `import <file>` | Import, verify, and decrypt a `.semp` file |
 | `status` | Show identity, key fingerprints, and server info |
@@ -251,6 +273,22 @@ First federated SEMP message!
   -subject "See attached" \
   -body "Report is attached." \
   -attach report.pdf,notes.txt
+```
+
+### Block list management
+
+```bash
+# Block a user
+./semp-client -config alice.toml block -type user -entity spammer@example.com -reason "spam"
+
+# Block an entire domain
+./semp-client -config alice.toml block -type domain -entity spam.example -scope direct
+
+# List your block entries
+./semp-client -config alice.toml blocklist
+
+# Remove a block entry
+./semp-client -config alice.toml unblock <entry-id>
 ```
 
 ### Export / Import `.semp` files
@@ -358,7 +396,7 @@ Local SQLite database (pure-Go, no CGO) with tables for:
 
 | Package | Purpose |
 |---------|---------|
-| `semp.dev/semp-go` v0.2.1 | SEMP protocol library |
+| `semp.dev/semp-go` v0.2.2 | SEMP protocol library |
 | `github.com/BurntSushi/toml` | Configuration parsing |
 | `modernc.org/sqlite` | Pure-Go SQLite driver |
 | `fyne.io/fyne/v2` | Desktop GUI framework (for semp-gui) |
