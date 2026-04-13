@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"mime"
@@ -94,9 +95,27 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 		return nil, err
 	}
 
-	// Start brief recipients with domain encryption keys (sender's + recipient's servers).
-	briefRecipients := make([]seal.RecipientKey, 0, len(domainEncKeys)+len(recipientKeys)+1)
+	// Always include the home server's domain encryption key in brief recipients
+	// so it can unwrap the brief for routing. This was cached during registration.
+	briefRecipients := make([]seal.RecipientKey, 0, len(domainEncKeys)+len(recipientKeys)+2)
+	homeDomEncRec, _ := c.Store.LookupDomainEncryptionKey(context.Background(), c.Cfg.Domain)
+	var homeDomEncFP keys.Fingerprint
+	if homeDomEncRec != nil {
+		homeDomEncPub, err := base64.StdEncoding.DecodeString(homeDomEncRec.PublicKey)
+		if err == nil {
+			homeDomEncFP = homeDomEncRec.KeyID
+			briefRecipients = append(briefRecipients, seal.RecipientKey{
+				Fingerprint: homeDomEncFP, PublicKey: homeDomEncPub,
+			})
+		}
+	}
+
+	// Add any remote domain encryption keys from SEMP_KEYS responses.
 	for _, dk := range domainEncKeys {
+		// Skip if it's the same as home domain (already added).
+		if dk.Fingerprint == homeDomEncFP {
+			continue
+		}
 		briefRecipients = append(briefRecipients, dk)
 	}
 	briefRecipients = append(briefRecipients, seal.RecipientKey{
