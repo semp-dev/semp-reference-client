@@ -1,6 +1,6 @@
 # SEMP Reference Client
 
-A SEMP client (CLI + desktop GUI) that demonstrates the full protocol lifecycle: key generation, handshake, encrypted envelope composition, submission, fetching, decryption, key requests, session rekeying, and `.semp` file import/export.
+A SEMP client (CLI + desktop GUI) that demonstrates the full protocol lifecycle: key registration, handshake, encrypted envelope composition, submission, fetching, decryption, key requests, session rekeying, and `.semp` file import/export.
 
 Built on the [semp-go](https://github.com/semp-dev/semp-go) library and designed to work with the [semp-reference-server](https://github.com/semp-dev/semp-reference-server).
 
@@ -10,7 +10,7 @@ Two binaries:
 
 ## Quick Start (Local)
 
-This walkthrough starts a local reference server and two clients (Alice and Bob) on the same machine.
+This walkthrough starts a local reference server and two clients on the same machine.
 
 ### 1. Build the server
 
@@ -32,10 +32,12 @@ listen_addr = ":8443"
 path = "semp.db"
 
 [[users]]
-address = "alice@example.com"
+address  = "alice@example.com"
+password = "changeme"
 
 [[users]]
-address = "bob@example.com"
+address  = "bob@example.com"
+password = "changeme"
 
 [policy]
 session_ttl = 300
@@ -51,14 +53,7 @@ Start the server:
 ./semp-server -config semp.toml
 ```
 
-The server generates domain keys and user keys automatically on first run and stores them in `semp.db`. You should see output like:
-
-```
-level=INFO msg="generated new domain keys" domain=example.com ...
-level=INFO msg="generated user keys" address=alice@example.com ...
-level=INFO msg="generated user keys" address=bob@example.com ...
-level=INFO msg="listening" addr=:8443
-```
+The server generates its domain keys on first run. User keys are registered by clients.
 
 ### 3. Build the client
 
@@ -71,16 +66,10 @@ go build -o semp-gui ./cmd/semp-gui
 
 ### 4. Create client configs
 
-```bash
-cp config.example.toml alice.toml
-cp config.example.toml bob.toml
-```
-
 **alice.toml:**
 ```toml
 identity = "alice@example.com"
 server = "ws://localhost:8443/v1/ws"
-domain = "example.com"
 
 [database]
 path = "alice.db"
@@ -93,7 +82,6 @@ insecure = true
 ```toml
 identity = "bob@example.com"
 server = "ws://localhost:8443/v1/ws"
-domain = "example.com"
 
 [database]
 path = "bob.db"
@@ -102,21 +90,16 @@ path = "bob.db"
 insecure = true
 ```
 
-### 5. Provision client keys
+### 5. Register
 
-The reference server generates user keys on first boot. Export them and import into the client:
+Each user generates keys locally and registers with the server:
 
 ```bash
-# From the server directory
-./semp-server export-keys -address alice@example.com -o alice-keys.json
-./semp-server export-keys -address bob@example.com -o bob-keys.json
-
-# From the client directory
-./semp-client -config alice.toml import-keys alice-keys.json
-./semp-client -config bob.toml import-keys bob-keys.json
+./semp-client -config alice.toml register -password changeme
+./semp-client -config bob.toml register -password changeme
 ```
 
-> **Important: this key provisioning model is for demonstration only.** In a production SEMP deployment, user private keys are generated on the client device and never leave it. Only the public key is registered with the server via a registration API. The server never sees or stores user private keys. This reference implementation uses server-side key generation and `export-keys` / `import-keys` purely for convenience. See [KEY.md section 9](https://github.com/semp-dev/semp-spec/blob/master/KEY.md) for the specification.
+This generates Ed25519 identity and X25519 encryption key pairs on the client device, pushes only the public keys to the server, and caches the server's domain keys locally. **Private keys never leave the client device.**
 
 ### 6. Send and receive
 
@@ -149,7 +132,7 @@ Envelope submitted: alice@example.com-1776054028518410000
   bob@example.com: delivered
 ```
 
-**Bob fetches and reads:**
+**Bob fetches:**
 ```
 $ ./semp-client -config bob.toml fetch
 level=INFO msg=connected server=wss://semp.example.com/v1/ws
@@ -164,23 +147,13 @@ Body:
 Just SEMPing real quick
 
 1 message(s) fetched.
-
-$ ./semp-client -config bob.toml inbox
-MESSAGE ID                                        DIR       FROM                       SUBJECT
-----------------------------------------------------------------------------------------------------
-alice@example.com-1776054028518410000              received  alice@example.com          Hello
-
-1 message(s)
 ```
 
 ## Connecting to a Remote Server
 
-To use the client against a deployed reference server (e.g. `semp.example.com`), adjust the client config:
-
 ```toml
 identity = "alice@example.com"
 server = "wss://semp.example.com/v1/ws"
-domain = "example.com"
 
 [database]
 path = "alice.db"
@@ -191,58 +164,18 @@ insecure = false
 
 Key differences from local setup:
 - **`server`** uses `wss://` (TLS) and points to the deployed server's hostname
-- **`tls.insecure`** is `false` (enforces TLS -- the default for production)
-- **`domain`** is the email domain (e.g. `example.com`), which may differ from the server hostname (`semp.example.com`)
+- **`tls.insecure`** is `false` (enforces TLS)
+- The email domain (e.g. `example.com`) may differ from the server hostname (`semp.example.com`)
 
-The server must have TLS configured (directly or via a reverse proxy like Caddy/Traefik/Cloudflare) and the user must be listed in the server's `[[users]]` config.
-
-Before connecting, import the keys exported from the server:
+Register before first use:
 
 ```bash
-./semp-client -config alice.toml import-keys alice-keys.json
+./semp-client -config alice.toml register -password changeme
 ```
 
 ## Cross-Domain Federation
 
-Two servers on different domains can exchange messages via federation. For example, Alice on `alpha.com` can send to Bob on `beta.com`.
-
-### Server setup
-
-Each server needs to know about its federation peer. Add to **Server-Alpha** (`alpha.com`):
-
-```toml
-[[federation.peers]]
-domain             = "beta.com"
-endpoint           = "wss://semp.beta.com/v1/federate"
-domain_signing_key = "<beta.com's Ed25519 signing public key, base64>"
-```
-
-And the reverse on **Server-Beta** (`beta.com`):
-
-```toml
-[[federation.peers]]
-domain             = "alpha.com"
-endpoint           = "wss://semp.alpha.com/v1/federate"
-domain_signing_key = "<alpha.com's Ed25519 signing public key, base64>"
-```
-
-You can extract a server's domain signing key from its database:
-
-```bash
-sqlite3 semp.db "SELECT hex(public_key) FROM domain_keys WHERE key_type = 'signing';"
-```
-
-Or from its well-known endpoint:
-
-```bash
-curl https://semp.alpha.com/.well-known/semp/configuration
-```
-
-Alternatively, if DNS SRV/TXT records are configured per the [SEMP Discovery spec](https://github.com/semp-dev/semp-spec/blob/main/DISCOVERY.md), static peer configuration can be skipped -- the servers discover each other automatically.
-
-### Client usage
-
-From the client's perspective, cross-domain is transparent. Alice's client connects to her home server, and the server handles federation:
+Two servers on different domains can exchange messages via federation. From the client's perspective, cross-domain messaging is transparent:
 
 ```bash
 # Alice on alpha.com sends to Bob on beta.com
@@ -255,18 +188,19 @@ From the client's perspective, cross-domain is transparent. Alice's client conne
 ./semp-client -config bob.toml fetch
 ```
 
-The flow is:
+Federation is automatic when both servers have DNS SRV/TXT records configured. The servers discover each other, exchange domain signing keys via well-known endpoints, and establish federation sessions on demand. No manual peer configuration required.
+
+The flow:
 1. Alice's client connects to Server-Alpha, requests Bob's keys (routed over federation)
 2. Client encrypts and submits the envelope to Server-Alpha
-3. Server-Alpha opens a federation session to Server-Beta and forwards the envelope
+3. Server-Alpha discovers Server-Beta via DNS SRV, fetches its domain key, opens a federation session, and forwards the envelope
 4. Bob's client connects to Server-Beta and fetches the message
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `init` | Generate identity (Ed25519) and encryption (X25519) key pairs |
-| `import-keys <file>` | Import keys exported from the server (`semp-server export-keys`) |
+| `register -password <pw>` | Generate keys locally and register public keys with the server |
 | `send` | Compose, encrypt, and submit an envelope |
 | `fetch` | Fetch and decrypt all pending envelopes from the home server |
 | `inbox` | List received messages |
@@ -309,10 +243,10 @@ The GUI provides a familiar email client layout:
 - **Status bar** -- Identity, connection state, key fingerprints
 - **Menu bar:**
   - File: Import/Export `.semp` files
-  - Tools: Generate Keys, Lookup Keys, Connect, Fetch Messages
+  - Tools: Register, Lookup Keys, Connect, Fetch Messages
   - Help: Status, About
 
-All network operations (connect, handshake, send, fetch, key lookup) run in background goroutines to keep the UI responsive. The client connects lazily on the first network operation.
+All network operations run in background goroutines to keep the UI responsive. The client connects lazily on the first network operation.
 
 ## Architecture
 
@@ -323,19 +257,30 @@ internal/config/config.go       TOML configuration
 internal/store/schema.go        SQLite schema
 internal/store/sqlite.go        keys.PrivateStore implementation + message storage
 internal/keygen/keygen.go       Key generation (Ed25519 + KEM)
-internal/client/client.go       Core client: connect, handshake, session
+internal/client/client.go       Core client: connect, register, handshake, session
 internal/client/sender.go       Envelope composition and submission
 internal/client/receiver.go     Envelope fetch and decryption
 internal/client/rekey.go        Background session rekeying at 80% TTL
-internal/gui/app.go             GUI shared state and bindings
-internal/gui/layout.go          Window assembly and menu bar
-internal/gui/sidebar.go         Folder navigation
-internal/gui/messagelist.go     Message list (widget.List)
-internal/gui/messagedetail.go   Message detail view
-internal/gui/compose.go         Compose window
-internal/gui/statusbar.go       Status bar
-internal/gui/dialogs.go         Menu action handlers (import, export, keys, status)
-internal/gui/background.go      Goroutine helpers for network operations
+internal/gui/                   Desktop GUI (Fyne widgets, dialogs, background ops)
+```
+
+### Key Provisioning
+
+```
+Client                                       Server
+  |                                            |
+  |  1. Generate Ed25519 + X25519 keys         |
+  |     (private keys stay on device)           |
+  |                                            |
+  |  2. POST /v1/register ------------------>  |
+  |     { address, password, public keys }     |
+  |                                            |
+  |  <-- 200 OK  ----------------------------- |
+  |     { domain signing key,                  |
+  |       domain encryption key }              |
+  |                                            |
+  |  3. Cache domain keys locally              |
+  |  4. Ready to handshake and send            |
 ```
 
 ### Protocol Flow
@@ -358,8 +303,6 @@ Client                                      Server
   |                                           |
   |-- SEMP_REKEY (at 80% TTL) ------------->|
   |<-- SEMP_REKEY (accepted, new session) ---|
-  |                                           |
-  |-- close -------------------------------->|
 ```
 
 ### Cryptography
@@ -383,7 +326,7 @@ Local SQLite database (pure-Go, no CGO) with tables for:
 
 | Package | Purpose |
 |---------|---------|
-| `semp.dev/semp-go` | SEMP protocol library |
+| `semp.dev/semp-go` v0.2.0 | SEMP protocol library |
 | `github.com/BurntSushi/toml` | Configuration parsing |
 | `modernc.org/sqlite` | Pure-Go SQLite driver |
 | `fyne.io/fyne/v2` | Desktop GUI framework (for semp-gui) |
