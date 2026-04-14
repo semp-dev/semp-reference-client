@@ -67,14 +67,13 @@ func (c *Client) Register(ctx context.Context, password string) error {
 		}
 		c.Store.PutUserKeyPair(c.Cfg.Identity, keys.TypeIdentity, "ed25519", idPub, idPriv)
 
-		// Encryption keys are always X25519 because the seal layer uses
-		// X25519 for per-recipient key wrapping regardless of session suite.
-		baselineKEM := crypto.SuiteBaseline.KEM()
-		encPub, encPriv, err := baselineKEM.GenerateKeyPair()
+		// Encryption keys use the suite's KEM so that post-quantum suites
+		// generate hybrid keys for PQ-protected envelope wrapping.
+		encPub, encPriv, err := c.Suite.KEM().GenerateKeyPair()
 		if err != nil {
 			return fmt.Errorf("client: generate encryption key: %w", err)
 		}
-		c.Store.PutUserKeyPair(c.Cfg.Identity, keys.TypeEncryption, "x25519-chacha20-poly1305", encPub, encPriv)
+		c.Store.PutUserKeyPair(c.Cfg.Identity, keys.TypeEncryption, string(c.Suite.ID()), encPub, encPriv)
 		c.Log.Info("generated keys locally")
 	}
 
@@ -107,7 +106,7 @@ func (c *Client) Register(ctx context.Context, password string) error {
 			PublicKey: base64.StdEncoding.EncodeToString(idPub),
 		},
 		EncryptionKey: registerKey{
-			Algorithm: "x25519-chacha20-poly1305",
+			Algorithm: string(c.Suite.ID()),
 			PublicKey: base64.StdEncoding.EncodeToString(encPub),
 		},
 	}
@@ -279,13 +278,18 @@ func (c *Client) recipientPrivateKeys() ([]RecipientCandidate, error) {
 	if fp == "" {
 		return nil, fmt.Errorf("client: no encryption key found for %s", c.Cfg.Identity)
 	}
-	return []RecipientCandidate{{Fingerprint: fp, PrivateKey: priv}}, nil
+	pub, _, err := c.Store.LoadUserPublicKey(c.Cfg.Identity, keys.TypeEncryption)
+	if err != nil {
+		return nil, fmt.Errorf("client: load encryption public key: %w", err)
+	}
+	return []RecipientCandidate{{Fingerprint: fp, PrivateKey: priv, PublicKey: pub}}, nil
 }
 
 // RecipientCandidate is a local alias used when building decryption candidates.
 type RecipientCandidate struct {
 	Fingerprint keys.Fingerprint
 	PrivateKey  []byte
+	PublicKey   []byte
 }
 
 // senderEncryptionPubKey returns the user's own encryption public key and

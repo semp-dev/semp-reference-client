@@ -6,7 +6,7 @@ require (
 	fyne.io/fyne/v2 v2.7.3
 	github.com/BurntSushi/toml v1.6.0
 	modernc.org/sqlite v1.48.2
-	semp.dev/semp-go v0.2.5
+	semp.dev/semp-go v0.3.0
 )
 
 require (

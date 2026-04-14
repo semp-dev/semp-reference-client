@@ -433,8 +433,9 @@ func runImport(cfg *config.Config, s *store.SQLiteStore, logger *slog.Logger, ar
 		fmt.Println("\nCannot decrypt: no encryption key available.")
 		return
 	}
+	pub, _, _ := s.LoadUserPublicKey(cfg.Identity, keys.TypeEncryption)
 	candidates := []envelope.RecipientPrivateKey{
-		{Fingerprint: fp, PrivateKey: priv},
+		{Fingerprint: fp, PrivateKey: priv, PublicKey: pub},
 	}
 
 	b, err := envelope.OpenBriefAny(env, suite, candidates)

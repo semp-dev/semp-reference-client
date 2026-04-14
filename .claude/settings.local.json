@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(GONOSUMDB=semp.dev GOPROXY=direct go build ./cmd/semp-client)",
+      "Bash(GONOSUMDB=semp.dev GOPROXY=direct go vet ./...)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create --repo semp-dev/semp-reference-client --base master --head claude --title 'Implement SEMP reference client' --body ':*)",
+      "Bash(GONOSUMDB=semp.dev GOPROXY=direct go get fyne.io/fyne/v2@latest)",
+      "Bash(GONOSUMDB=semp.dev GOPROXY=direct go mod tidy)",
+      "Bash(GONOSUMDB=semp.dev GOPROXY=direct go build ./cmd/semp-gui)",
+      "Bash(git fetch:*)",
+      "Bash(gh pr create --repo semp-dev/semp-reference-client --base master --head claude --title 'Add Fyne-based desktop GUI \\(semp-gui\\)' --body ':*)",
+      "Bash(gh pr:*)"
+    ]
+  }
+}

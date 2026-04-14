@@ -73,6 +73,7 @@ func (c *Client) Fetch(ctx context.Context) ([]DecryptedMessage, error) {
 		envCandidates[i] = envelope.RecipientPrivateKey{
 			Fingerprint: cand.Fingerprint,
 			PrivateKey:  cand.PrivateKey,
+			PublicKey:   cand.PublicKey,
 		}
 	}
 
