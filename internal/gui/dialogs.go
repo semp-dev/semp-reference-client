@@ -170,17 +170,27 @@ func ShowImportDialog(g *GUIApp) {
 			return
 		}
 
-		b, err := openBrief(env, suite, candidates)
-		if err != nil {
-			dialog.ShowError(fmt.Errorf("decrypt brief: %w", err), g.Window)
-			return
+		// Decrypt and verify per ENVELOPE.md §6.5.3. We need an active
+		// client session so the resolver can issue SEMP_KEYS for the
+		// sender's identity key; otherwise we fall back to a no-op
+		// resolver that will mark the result as unverified.
+		ctxImport, cancelImport := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelImport()
+		var resolver envelope.SenderKeyResolver = envelope.SenderKeyResolverFunc(
+			func(_ context.Context, _, _ string) ([]byte, error) {
+				return nil, envelope.ErrSenderKeyUnknown
+			})
+		if cl, err := g.GetClient(ctxImport); err == nil {
+			resolver = cl.SenderKeyResolver()
 		}
 
-		enc, err := openEnclosure(env, suite, candidates)
+		res, err := envelope.OpenAndVerify(ctxImport, env, suite, candidates, resolver)
 		if err != nil {
-			dialog.ShowError(fmt.Errorf("decrypt enclosure: %w", err), g.Window)
+			dialog.ShowError(fmt.Errorf("decrypt+verify: %w", err), g.Window)
 			return
 		}
+		b := res.Brief
+		enc := res.Enclosure
 
 		// Store imported message.
 		rawJSON, _ := json.Marshal(env)
@@ -192,8 +202,12 @@ func ShowImportDialog(g *GUIApp) {
 			toStrs, nil, enc.Subject, enc.Body.Get("text/plain"), rawJSON)
 
 		g.RefreshMessages()
-		dialog.ShowInformation("Import Successful",
-			fmt.Sprintf("Imported message %s from %s", b.MessageID, b.From), g.Window)
+
+		successMsg := fmt.Sprintf("Imported message %s from %s", b.MessageID, b.From)
+		if !res.SenderSignatureVerified {
+			successMsg += "\n\nWARNING: sender signature could not be verified — origin is NOT authenticated."
+		}
+		dialog.ShowInformation("Import Successful", successMsg, g.Window)
 
 	}, g.Window)
 	fd.SetFilter(storage.NewExtensionFileFilter([]string{".semp"}))
@@ -277,6 +291,8 @@ func decodeEnvelope(raw []byte) (*envelope.Envelope, error) {
 }
 
 // buildCandidates creates recipient private key candidates from the store.
+// Both PrivateKey and PublicKey are required: PublicKey is bound into the
+// AEAD AAD during seal unwrapping per ENVELOPE.md §6.3.
 func buildCandidates(g *GUIApp) ([]envelope.RecipientPrivateKey, error) {
 	priv, fp, err := g.Store.LoadUserPrivateKey(g.Cfg.Identity, keys.TypeEncryption)
 	if err != nil {
@@ -285,8 +301,12 @@ func buildCandidates(g *GUIApp) ([]envelope.RecipientPrivateKey, error) {
 	if fp == "" {
 		return nil, fmt.Errorf("no encryption key for %s", g.Cfg.Identity)
 	}
+	pub, _, err := g.Store.LoadUserPublicKey(g.Cfg.Identity, keys.TypeEncryption)
+	if err != nil {
+		return nil, fmt.Errorf("load encryption public key: %w", err)
+	}
 	return []envelope.RecipientPrivateKey{
-		{Fingerprint: fp, PrivateKey: priv},
+		{Fingerprint: fp, PrivateKey: priv, PublicKey: pub},
 	}, nil
 }
 

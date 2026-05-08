@@ -95,6 +95,13 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 		return nil, err
 	}
 
+	// Identity private key, needed by Compose to produce the
+	// sender_signature on the enclosure per ENVELOPE.md §6.5.
+	idPriv, idFP, err := c.Store.LoadUserPrivateKey(c.Cfg.Identity, keys.TypeIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("client: load identity private key: %w", err)
+	}
+
 	// Always include the home server's domain encryption key in brief recipients
 	// so it can unwrap the brief for routing. This was cached during registration.
 	briefRecipients := make([]seal.RecipientKey, 0, len(domainEncKeys)+len(recipientKeys)+2)
@@ -106,6 +113,7 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 			homeDomEncFP = homeDomEncRec.KeyID
 			briefRecipients = append(briefRecipients, seal.RecipientKey{
 				Fingerprint: homeDomEncFP, PublicKey: homeDomEncPub,
+				Kind: seal.KindServerDomain,
 			})
 		}
 	}
@@ -120,10 +128,11 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 	}
 	briefRecipients = append(briefRecipients, seal.RecipientKey{
 		Fingerprint: senderFP, PublicKey: senderPub,
+		Kind: seal.KindUserClient,
 	})
 
 	enclosureRecipients := []seal.RecipientKey{
-		{Fingerprint: senderFP, PublicKey: senderPub},
+		{Fingerprint: senderFP, PublicKey: senderPub, Kind: seal.KindUserClient},
 	}
 	for _, rk := range recipientKeys {
 		briefRecipients = append(briefRecipients, rk)
@@ -154,6 +163,8 @@ func (c *Client) Send(ctx context.Context, opts SendOptions) (*delivery.Submissi
 		SenderDomainKeyID:   domainSignFP,
 		BriefRecipients:     briefRecipients,
 		EnclosureRecipients: enclosureRecipients,
+		IdentityPrivateKey:  idPriv,
+		IdentityKeyID:       string(idFP),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("client: compose envelope: %w", err)
@@ -222,6 +233,7 @@ func (c *Client) fetchRecipientKeys(ctx context.Context, addresses []string) ([]
 				domainEncKeys = append(domainEncKeys, seal.RecipientKey{
 					Fingerprint: r.DomainEncKey.KeyID,
 					PublicKey:   pub,
+					Kind:        seal.KindServerDomain,
 				})
 			}
 		}
@@ -237,6 +249,7 @@ func (c *Client) fetchRecipientKeys(ctx context.Context, addresses []string) ([]
 				recipients = append(recipients, seal.RecipientKey{
 					Fingerprint: uk.KeyID,
 					PublicKey:   pub,
+					Kind:        seal.KindUserClient,
 				})
 
 				// Cache in contacts.

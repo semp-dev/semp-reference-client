@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"semp.dev/semp-go/brief"
 	"semp.dev/semp-go/delivery"
 	"semp.dev/semp-go/envelope"
+	"semp.dev/semp-go/keys"
 )
 
 // DecryptedMessage holds the decrypted contents of an envelope.
@@ -92,18 +94,22 @@ func (c *Client) Fetch(ctx context.Context) ([]DecryptedMessage, error) {
 			continue
 		}
 
-		// Decrypt brief.
-		b, err := envelope.OpenBriefAny(env, c.Suite, envCandidates)
+		// Decrypt and verify in one pass per ENVELOPE.md §6.5.3 / §6.6.4.
+		// The resolver looks up the sender's published identity key
+		// in-session over SEMP_KEYS so verifyEnclosureWithResolver can
+		// authenticate the sender_signature.
+		res, err := envelope.OpenAndVerify(ctx, env, c.Suite, envCandidates, c.SenderKeyResolver())
 		if err != nil {
-			c.Log.Warn("skip envelope: decrypt brief failed", "postmark_id", env.Postmark.ID, "err", err)
+			c.Log.Warn("skip envelope: open+verify failed", "postmark_id", env.Postmark.ID, "err", err)
 			continue
 		}
-
-		// Decrypt enclosure.
-		enc, err := envelope.OpenEnclosureAny(env, c.Suite, envCandidates)
-		if err != nil {
-			c.Log.Warn("skip envelope: decrypt enclosure failed", "postmark_id", env.Postmark.ID, "err", err)
-			continue
+		b := res.Brief
+		enc := res.Enclosure
+		if !res.SenderSignatureVerified {
+			c.Log.Warn("sender_signature unverified — content shown but origin is NOT authenticated",
+				"postmark_id", env.Postmark.ID,
+				"from", string(b.From),
+				"err", res.SenderSignatureError)
 		}
 
 		// Verify attachment hashes.
@@ -153,4 +159,43 @@ func (c *Client) Fetch(ctx context.Context) ([]DecryptedMessage, error) {
 	}
 
 	return messages, nil
+}
+
+// SenderKeyResolver returns an envelope.SenderKeyResolver bound to this
+// client's active session. Callers pass it to envelope.OpenAndVerify so
+// the receiver can authenticate sender_signatures per ENVELOPE.md §6.5.3.
+func (c *Client) SenderKeyResolver() envelope.SenderKeyResolver {
+	return envelope.SenderKeyResolverFunc(c.LookupSenderIdentityKey)
+}
+
+// LookupSenderIdentityKey resolves a sender's identity public key by
+// (address, key_id) via an in-session SEMP_KEYS request. The home server
+// resolves the key locally for same-domain senders and via the federated
+// well-known fetcher for cross-domain senders.
+func (c *Client) LookupSenderIdentityKey(ctx context.Context, senderAddr, keyID string) ([]byte, error) {
+	fetcher := keys.NewFetcher(c.conn)
+	reqID := fmt.Sprintf("vr-%d", time.Now().UnixNano())
+	resp, err := fetcher.FetchKeys(ctx, keys.NewRequest(reqID, []string{senderAddr}))
+	if err != nil {
+		return nil, fmt.Errorf("verify-resolver: fetch keys: %w", err)
+	}
+	for _, r := range resp.Results {
+		if r.Address != senderAddr || r.Status != keys.StatusFound {
+			continue
+		}
+		for _, uk := range r.UserKeys {
+			if uk.Type != keys.TypeIdentity {
+				continue
+			}
+			if string(uk.KeyID) != keyID {
+				continue
+			}
+			pub, derr := base64.StdEncoding.DecodeString(uk.PublicKey)
+			if derr != nil {
+				return nil, fmt.Errorf("verify-resolver: decode public key: %w", derr)
+			}
+			return pub, nil
+		}
+	}
+	return nil, envelope.ErrSenderKeyUnknown
 }

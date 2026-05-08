@@ -157,11 +157,14 @@ func (p *MessageDetailPanel) Container() fyne.CanvasObject {
 	return p.outer
 }
 
-// parseAttachmentSummary tries to decode the raw envelope and extract
-// attachment info. Returns a formatted string or empty.
+// parseAttachmentSummary decodes a stored envelope to extract attachment
+// metadata for display. It deliberately skips sender_signature verification
+// per ENVELOPE.md §6.5.3 because this path renders messages already
+// verified at fetch/import time and stored locally — the cached envelope
+// is trusted to the same extent as anything else in the local SQLite
+// database. Re-verifying here would require a server roundtrip every
+// time the inbox is rendered.
 func parseAttachmentSummary(g *GUIApp, rawEnvelope []byte) string {
-	// Try to decode and extract attachment info from the enclosure.
-	// We use envelope.Decode + OpenEnclosureAny with local keys.
 	env, err := decodeEnvelope(rawEnvelope)
 	if err != nil {
 		return ""
