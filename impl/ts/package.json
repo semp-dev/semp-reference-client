@@ -1,0 +1,40 @@
+{
+  "name": "@sempdev/semp-reference-client",
+  "version": "0.5.0",
+  "description": "Reference SEMP client (TypeScript). Greenfield port of impl/go.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "semp-client": "./bin/semp-client.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "bin",
+    "shared"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node -e \"import('node:fs').then(({copyFileSync,mkdirSync,existsSync})=>{mkdirSync('dist/shared/schema',{recursive:true});copyFileSync('../../shared/schema/0001_init.sql','dist/shared/schema/0001_init.sql');})\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@sempdev/semp": "^0.5.0",
+    "better-sqlite3": "^11.5.0",
+    "commander": "^12.1.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "smol-toml": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.0"
+  }
+}
