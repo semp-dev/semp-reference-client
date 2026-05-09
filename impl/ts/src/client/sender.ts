@@ -119,11 +119,25 @@ async function fetchRecipientKeys(
     }
     if (r.domain_key !== undefined && senderDomainSigningKeyId === "") {
       senderDomainSigningKeyId = r.domain_key.key_id;
+      // Persist so the receiver path can verify cross-domain envelopes
+      // without a second SEMP_KEYS round trip.
+      client.store.putDomainKey(
+        r.domain,
+        "signing",
+        r.domain_key.algorithm,
+        new Uint8Array(Buffer.from(r.domain_key.public_key, "base64")),
+      );
     }
     if (r.domain_enc_key !== undefined && !seenDomains.has(r.domain)) {
       seenDomains.add(r.domain);
       const pub = new Uint8Array(Buffer.from(r.domain_enc_key.public_key, "base64"));
       domainEncKeys.push({ keyId: r.domain_enc_key.key_id, publicKey: pub });
+      client.store.putDomainKey(
+        r.domain,
+        "encryption",
+        r.domain_enc_key.algorithm,
+        pub,
+      );
     }
     for (const uk of r.user_keys) {
       if (uk.key_type !== "encryption") {

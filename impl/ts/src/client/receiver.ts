@@ -45,12 +45,20 @@ export interface AttachmentInfo {
  */
 function buildSenderKeyResolver(client: Client): SenderKeyResolverFunc {
   return async (fromDomain: string, keyId: string) => {
+    // 1. Local cache. Cross-domain SEMP_KEYS responses cached during
+    //    earlier outbound sends populate this; the receiver verifies
+    //    without a network round trip.
+    const local = client.store.lookupDomainKey(fromDomain);
+    if (local !== null && local.key_id === keyId) {
+      return new Uint8Array(Buffer.from(local.public_key, "base64"));
+    }
+    // 2. SEMP_KEYS via the home server. This works only for sender
+    //    domains the server already knows about; an address probe
+    //    (e.g. _resolver@<fromDomain>) only carries `domain_key` in
+    //    the SEMP_KEYS result when the probe matches a known user.
     if (client.session === null) {
       return null;
     }
-    // SEMP_KEYS resolves domain keys for any address in that domain;
-    // use a synthetic placeholder address rooted at the domain so the
-    // server walks the domain branch of the resolver.
     const probeAddress = `_resolver@${fromDomain}`;
     const reqId = `vr-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const req = newKeysRequest(reqId, [probeAddress]);
@@ -69,7 +77,9 @@ function buildSenderKeyResolver(client: Client): SenderKeyResolverFunc {
         continue;
       }
       if (r.domain_key !== undefined && r.domain_key.key_id === keyId) {
-        return new Uint8Array(Buffer.from(r.domain_key.public_key, "base64"));
+        const pub = new Uint8Array(Buffer.from(r.domain_key.public_key, "base64"));
+        client.store.putDomainKey(fromDomain, "signing", r.domain_key.algorithm, pub);
+        return pub;
       }
     }
     return null;
