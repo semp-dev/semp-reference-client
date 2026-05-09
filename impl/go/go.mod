@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/BurntSushi/toml v1.6.0
 	modernc.org/sqlite v1.48.2
-	semp.dev/semp-go v0.5.0
+	semp.dev/semp-go v0.5.1
 )
 
 require (

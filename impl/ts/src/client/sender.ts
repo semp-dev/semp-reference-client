@@ -241,11 +241,18 @@ export async function send(client: Client, opts: SendOptions): Promise<SendOutco
     });
   }
 
+  // Canonical form per ENVELOPE.md §6.5 (vector sender-signature.json)
+  // requires every field present, even when empty: subject "" when
+  // absent, attachments [] when none, extensions {} when none,
+  // forwarded_from null on fresh envelopes. Cross-impl readers
+  // re-canonicalize the received JSON, so the sender MUST emit the
+  // full shape or the sender_signature input bytes diverge.
   const enclosurePreSign: Record<string, unknown> = {
     subject: opts.subject,
     content_type: "text/plain",
     body: { "text/plain": opts.body },
     attachments,
+    forwarded_from: null,
     extensions: {},
     sender_signature: {
       algorithm: "ed25519",
