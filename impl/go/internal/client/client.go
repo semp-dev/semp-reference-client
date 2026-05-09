@@ -199,9 +199,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		t := ws.NewWithConfig(ws.Config{AllowInsecure: c.Cfg.TLS.Insecure})
 		conn, dialErr = t.Dial(ctx, server)
 	} else if strings.HasPrefix(server, "https://") || strings.HasPrefix(server, "http://") {
-		t := h2.NewWithConfig(h2.PersistentConfig{
-			Config: h2.Config{AllowInsecure: c.Cfg.TLS.Insecure},
-		})
+		t := h2.NewWithConfig(h2.Config{AllowInsecure: c.Cfg.TLS.Insecure})
 		conn, dialErr = t.Dial(ctx, server)
 	} else {
 		return fmt.Errorf("client: unsupported server URL scheme: %s", server)
