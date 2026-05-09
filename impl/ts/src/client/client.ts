@@ -3,11 +3,6 @@
  * `impl/go/internal/client/client.go` and uses the @sempdev/semp
  * primitives directly.
  *
- * The TS handshake driver only supports the baseline suite
- * ("x25519-chacha20-poly1305") in this release. The constructor
- * downgrades any PQ suite request with a warning so federation
- * scripts that omit `suite` keep working.
- *
  * @module
  */
 
@@ -35,8 +30,6 @@ import {
   resolveSuite,
 } from "./keygen.js";
 
-/** Supported handshake suite. The library only ships baseline today. */
-const HandshakeSuite = "x25519-chacha20-poly1305" as const;
 
 /** HTTPS / HTTP base URL derived from the configured server URL. */
 function serverHTTPBase(server: string): string {
@@ -257,7 +250,7 @@ export class Client {
     const capabilities: Capabilities = defaultClientCapabilities();
 
     const cfg: HandshakeClientConfig = {
-      suite: HandshakeSuite,
+      suite: this.suite,
       capabilities,
       transport: transportId,
       serverDomainPub,
