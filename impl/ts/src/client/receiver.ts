@@ -40,17 +40,28 @@ export interface AttachmentInfo {
 }
 
 /**
- * Build a {@link SenderKeyResolverFunc} bound to this client's session.
- * Looks up the sender's domain signing key via SEMP_KEYS.
+ * Build a {@link SenderKeyResolverFunc} bound to this client's
+ * session. The resolver looks up the sender DOMAIN signing key (the
+ * one that signs `seal.signature`) by checking the local cache and
+ * falling back to SEMP_KEYS via the home server.
+ *
+ * `skipCache` forces a network fetch and bypasses the local row.
+ * The receive loop calls this with `false` first; on a verify
+ * failure it evicts the cached row and retries with `true`.
  */
-function buildSenderKeyResolver(client: Client): SenderKeyResolverFunc {
+function buildSenderKeyResolver(
+  client: Client,
+  skipCache = false,
+): SenderKeyResolverFunc {
   return async (fromDomain: string, keyId: string) => {
     // 1. Local cache. Cross-domain SEMP_KEYS responses cached during
     //    earlier outbound sends populate this; the receiver verifies
-    //    without a network round trip.
-    const local = client.store.lookupDomainKey(fromDomain);
-    if (local !== null && local.key_id === keyId) {
-      return new Uint8Array(Buffer.from(local.public_key, "base64"));
+    //    without a network round trip. Skipped on the self-heal retry.
+    if (!skipCache) {
+      const local = client.store.lookupDomainKey(fromDomain);
+      if (local !== null && local.key_id === keyId) {
+        return new Uint8Array(Buffer.from(local.public_key, "base64"));
+      }
     }
     // 2. SEMP_KEYS via the home server. This works only for sender
     //    domains the server already knows about; an address probe
@@ -84,6 +95,24 @@ function buildSenderKeyResolver(client: Client): SenderKeyResolverFunc {
     }
     return null;
   };
+}
+
+/**
+ * Detect the openAndVerify error path that suggests a stale cached
+ * sender-domain key: either the resolver returned `null` (cache
+ * confidently said "no key for this id, here's the cached one") or
+ * verifySealSignature rejected the seal. Both warrant a single
+ * force-refresh retry; an opaque error (decode, candidate mismatch)
+ * does not.
+ */
+function isStaleSenderKeyError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  return (
+    err.message.includes("seal.signature did not verify") ||
+    err.message.includes("resolver returned null")
+  );
 }
 
 /** Build the recipient candidate list from the local encryption key. */
@@ -122,7 +151,8 @@ export async function fetchInbox(client: Client): Promise<DecryptedMessage[]> {
   }
 
   const candidates = buildRecipientCandidates(client);
-  const resolver = buildSenderKeyResolver(client);
+  const cachingResolver = buildSenderKeyResolver(client, false);
+  const refreshResolver = buildSenderKeyResolver(client, true);
 
   const out: DecryptedMessage[] = [];
   for (const b64 of resp.envelopes) {
@@ -152,14 +182,45 @@ export async function fetchInbox(client: Client): Promise<DecryptedMessage[]> {
         suite: client.suite,
         envelope: env,
         candidates,
-        resolver,
+        resolver: cachingResolver,
       });
     } catch (err) {
-      client.logger.warn(
-        { err: err instanceof Error ? err.message : String(err), postmarkId: env.postmark.id },
-        "skip envelope: open+verify failed",
-      );
-      continue;
+      // Self-heal: a stale cached sender-domain key (e.g. the sender
+      // re-registered with a fresh identity since we last cached it)
+      // produces "seal.signature did not verify" or
+      // "resolver returned null". Evict the cached row and retry once
+      // with a force-refresh resolver before giving up. Any other
+      // error path falls straight through to "skip envelope".
+      if (isStaleSenderKeyError(err)) {
+        client.store.evictDomainKey(env.postmark.from_domain, "signing");
+        try {
+          opened = await openAndVerify({
+            suite: client.suite,
+            envelope: env,
+            candidates,
+            resolver: refreshResolver,
+          });
+          client.logger.info(
+            { fromDomain: env.postmark.from_domain, postmarkId: env.postmark.id },
+            "verify-resolver: self-heal retry succeeded after force-refresh",
+          );
+        } catch (retryErr) {
+          client.logger.warn(
+            {
+              err: retryErr instanceof Error ? retryErr.message : String(retryErr),
+              postmarkId: env.postmark.id,
+            },
+            "skip envelope: open+verify failed after force-refresh retry",
+          );
+          continue;
+        }
+      } else {
+        client.logger.warn(
+          { err: err instanceof Error ? err.message : String(err), postmarkId: env.postmark.id },
+          "skip envelope: open+verify failed",
+        );
+        continue;
+      }
     }
 
     const brief = opened.brief as Record<string, unknown>;

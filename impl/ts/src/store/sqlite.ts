@@ -364,6 +364,20 @@ export class SQLitePrivateStore implements PrivateKeyStore {
     return fp;
   }
 
+  /**
+   * Evict the cached domain key for `(domain, keyType)`. Used by the
+   * verify-time self-heal path: when openAndVerify rejects an envelope
+   * because the cached sender-domain signing key does not match the
+   * key id on the wire, the receiver evicts the stale row and retries
+   * with a force-refresh resolver. Returns the number of rows deleted.
+   */
+  evictDomainKey(domain: string, keyType: "signing" | "encryption"): number {
+    const result = this.db
+      .prepare(`DELETE FROM domain_keys WHERE domain = ? AND key_type = ?`)
+      .run(domain, keyType);
+    return Number(result.changes);
+  }
+
   /** Persist a domain public key (private optional). Mirrors impl/go. */
   putDomainKey(
     domain: string,
