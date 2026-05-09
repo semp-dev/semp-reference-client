@@ -40,6 +40,23 @@ Drives a four-direction (same-domain × cross-domain × A→B + B→A) test agai
 
 Both implementations MUST pass identically.
 
+## Cross-language interop verified
+
+The Go and TS client implementations are wire-compatible with each other and with both server impls. Tested locally end-to-end (not yet in CI) with this matrix:
+
+| Scenario | Verdict |
+|---|---|
+| Go client against Go server (same-impl loop) | ✅ |
+| TS client against TS server (same-impl loop) | ✅ |
+| TS client against Go server | ✅ |
+| Go client against TS server | ✅ |
+| TS-signed envelope decoded by Go reader | ✅ (`sender_signature` verifies cross-impl) |
+| Go-signed envelope decoded by TS reader | ✅ (reverse direction also passes) |
+
+**Versions** (the four pieces that have to agree byte-for-byte): `semp-go v0.5.1`, `semp-ts v0.5.2`, `semp-reference-server master`, `semp-reference-client` (this repo) `master`. Each impl reads the same TOML, the same SQLite schema, and the same cross-language test vectors at `semp-spec/vectors/v1.0.0/`.
+
+**Reproduce**: bring up a Go+TS federation pair via `docker compose -f ../semp-reference-server/shared/deploy/docker-compose.federation.yml up -d --build`. Then drive `register` / `send` / `fetch` from either client impl against `domain-a.local` (Go) and `domain-b.local` (TS).
+
 ## Subcommands
 
 `register`, `send`, `fetch`, `inbox`, `sent`, `read`, `keys`, `export`, `import`, `block`, `unblock`, `blocklist`, `status`. Both impls expose the same flags.
