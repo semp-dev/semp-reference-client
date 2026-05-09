@@ -1,0 +1,28 @@
+# Compiled binaries
+semp-client
+semp-gui
+impl/go/semp-client
+impl/go/semp-gui
+impl/go/cmd/semp-client/semp-client
+impl/go/cmd/semp-gui/semp-gui
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Local config (preserve only the example)
+*.toml
+!**/config.example.toml
+!**/*.example.toml
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
