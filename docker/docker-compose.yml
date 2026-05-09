@@ -1,0 +1,34 @@
+# Local interop fixture: build both client impls and run their `status`
+# command against a `fixtures/*.toml` config. Pick which impl to start
+# via the COMPOSE_PROFILES env var:
+#
+#   COMPOSE_PROFILES=go docker compose -f docker/docker-compose.yml run semp-client-go
+#   COMPOSE_PROFILES=ts docker compose -f docker/docker-compose.yml run semp-client-ts
+#
+# Each service expects a TOML file at fixtures/<user>.toml. The
+# fixtures directory is intentionally not tracked; create your own.
+
+services:
+  semp-client-go:
+    profiles: ["go"]
+    build:
+      context: ..
+      dockerfile: docker/go.Dockerfile
+    volumes:
+      - ./fixtures:/etc/semp:ro
+      - client-go-data:/var/lib/semp
+    command: ["-config", "/etc/semp/semp.toml", "status"]
+
+  semp-client-ts:
+    profiles: ["ts"]
+    build:
+      context: ..
+      dockerfile: docker/ts.Dockerfile
+    volumes:
+      - ./fixtures:/etc/semp:ro
+      - client-ts-data:/var/lib/semp
+    command: ["-config", "/etc/semp/semp.toml", "status"]
+
+volumes:
+  client-go-data:
+  client-ts-data:
